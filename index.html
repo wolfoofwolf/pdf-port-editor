@@ -1,169 +1,1582 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-    <meta charset="UTF-8">
-    <title>PDF 連接埠標註編輯器 - 最終修正版</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
-    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF 端口標註器</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&amp;display=swap');
+    
+    :root {
+      --accent: #1e40af;
+    }
+    
+    body {
+      font-family: 'Noto Sans TC', system-ui, -apple-system, sans-serif;
+    }
+    
+    .pdf-viewer {
+      scrollbar-width: thin;
+      scrollbar-color: #64748b30 #f1f5f9;
+    }
+    
+    .page-wrapper {
+      box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+      background: white;
+      margin-bottom: 1.5rem;
+      border: 1px solid #e2e8f0;
+    }
+    
+    .port-block {
+      transition: box-shadow 0.1s ease, transform 0.1s ease;
+      user-select: none;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      letter-spacing: 0.3px;
+      box-shadow: 0 2px 4px rgb(0 0 0 / 0.15);
+      z-index: 10;
+      border-radius: 0 !important;
+      box-sizing: border-box;     /* 讓 height 計算更準確 */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      white-space: nowrap;
+      padding: 1px 3px;           /* 上下留一點點空間，避免被邊框吃掉 */
+    }
+    
+    .port-block:hover {
+      box-shadow: 0 4px 8px rgb(0 0 0 / 0.2);
+      transform: translateY(-1px);
+    }
+    
+    .port-block:active {
+      cursor: grabbing !important;
+    }
+    
+    .overlay {
+      /* Must allow pointer events so drag/drop and block interactions work */
+    }
+    
+    .port-block {
+      pointer-events: auto;
+    }
+    
+    .port-block[data-red="true"] {
+      box-shadow: 0 0 0 3px #ef4444, 0 2px 4px rgb(0 0 0 / 0.15);
+    }
+    
+    .dropzone {
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .dropzone.dragover {
+      background-color: #eff6ff;
+      border-color: #3b82f6;
+      transform: scale(1.01);
+    }
+    
+    .stats-card {
+      transition: all 0.2s ease;
+    }
+    
+    .pdf-page {
+      position: relative;
+      background: #f8fafc;
+    }
+    
+    .context-menu {
+      animation: contextPop 0.08s ease-out forwards;
+    }
+    
+    @keyframes contextPop {
+      from { opacity: 0; transform: scale(0.95) translateY(4px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    
+    .block-label {
+      text-shadow: 0 1px 1px rgb(255 255 255 / 0.6);
+      font-weight: 700;
+      font-size: 10.5px;          /* 稍微調小，讓文字更容易塞進 block */
+      line-height: 1;
+      max-width: 100%;
+      overflow: hidden;
+    }
+  </style>
 </head>
-<body class="bg-gray-900 text-white">
-    <div class="max-w-7xl mx-auto p-6">
-        <div class="flex justify-between items-center mb-4">
-            <div>
-                <h1 class="text-3xl font-bold">PDF 連接埠標註編輯器</h1>
-                <p class="text-emerald-400 text-sm">最終修正版（已解決 ArrayBuffer 問題）</p>
-            </div>
-            <button onclick="forceRender()" class="px-4 py-2 bg-red-600 rounded-2xl text-sm">強制渲染 (0.3)</button>
+<body class="bg-slate-100">
+  <!-- Navbar -->
+  <nav class="bg-white border-b border-slate-200 sticky top-0 z-50">
+    <div class="max-w-screen-2xl mx-auto px-6 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-x-3">
+        <div class="w-10 h-10 bg-blue-700 rounded-xl flex items-center justify-center">
+          <i class="fa-solid fa-map-marked text-white text-2xl"></i>
         </div>
-
-        <div class="flex gap-6">
-            <!-- 工具箱 -->
-            <div class="w-56 bg-gray-800 border border-gray-700 rounded-3xl p-4">
-                <h3 class="font-bold mb-3">工具箱</h3>
-                <div class="space-y-2">
-                    <button onclick="addBlock('data')" class="w-full py-2.5 bg-yellow-400 text-black font-bold rounded-2xl">Data Port</button>
-                    <button onclick="addBlock('cctv')" class="w-full py-2.5 bg-orange-400 text-black font-bold rounded-2xl">CCTV Port</button>
-                    <button onclick="addBlock('printer')" class="w-full py-2.5 bg-blue-400 text-black font-bold rounded-2xl">Printer Port</button>
-                    <button onclick="addBlock('ap')" class="w-full py-2.5 bg-green-400 text-black font-bold rounded-2xl">AP Port</button>
-                </div>
-                <div class="mt-6 text-sm">
-                    <div>總數：<span id="total-count" class="font-mono font-bold text-xl">0</span></div>
-                </div>
-            </div>
-
-            <!-- Viewer -->
-            <div class="flex-1">
-                <div class="flex items-center justify-between mb-3">
-                    <div>
-                        <button onclick="prevPage()" class="px-3 py-1 bg-gray-700 rounded">←</button>
-                        <span id="page-info" class="font-mono px-4">1 / 1</span>
-                        <button onclick="nextPage()" class="px-3 py-1 bg-gray-700 rounded">→</button>
-                    </div>
-                    <button onclick="exportPDF()" class="px-6 py-2 bg-emerald-600 rounded-2xl font-bold">下載 PDF</button>
-                </div>
-
-                <div id="viewer-wrapper" class="bg-gray-800 border border-gray-700 rounded-3xl min-h-[650px] flex items-center justify-center">
-                    <div id="placeholder" class="text-center">
-                        <div class="text-7xl mb-4">📄</div>
-                        <button onclick="document.getElementById('file-input').click()" class="px-10 py-3 bg-white text-black font-bold rounded-2xl">上傳 PDF</button>
-                    </div>
-                    <div id="viewer-container" class="hidden relative bg-white">
-                        <canvas id="pdf-canvas"></canvas>
-                        <div id="overlay" class="absolute top-0 left-0 w-full h-full"></div>
-                    </div>
-                </div>
-            </div>
+        <div>
+          <h1 class="text-2xl font-bold tracking-tight text-slate-900">PDF 端口標註器</h1>
+          <p class="text-xs text-slate-500 -mt-1">Port Label Editor • GitHub Pages</p>
         </div>
+      </div>
+      
+      <div class="flex items-center gap-x-2">
+        <button onclick="clearAll()" 
+                class="px-4 py-2 text-sm font-medium text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-xl flex items-center gap-x-2 transition-colors">
+          <i class="fa-solid fa-trash-can"></i>
+          <span>清除全部</span>
+        </button>
+        
+        <button onclick="exportPDF()" 
+                id="exportBtn"
+                disabled
+                class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-2xl flex items-center gap-x-2 shadow-sm active:scale-[0.985] transition-all">
+          <i class="fa-solid fa-download"></i>
+          <span>下載標註後的 PDF</span>
+        </button>
+      </div>
     </div>
+  </nav>
 
-    <input type="file" id="file-input" class="hidden" accept=".pdf" onchange="handleFileUpload(event)">
-
-    <div id="loading" class="hidden fixed inset-0 bg-black/90 flex items-center justify-center z-[999]">
-        <div class="text-center">
-            <div class="w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin mx-auto mb-6"></div>
-            <div class="text-2xl font-bold">正在處理複雜平面圖...</div>
+  <div class="max-w-screen-2xl mx-auto px-6 pt-5 pb-12">
+    <div class="flex gap-6">
+      
+      <!-- Sidebar -->
+      <div class="w-72 flex-shrink-0 space-y-5">
+        
+        <!-- Upload -->
+        <div class="bg-white rounded-3xl shadow-sm border border-slate-200 p-5">
+          <div class="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-x-2">
+            <i class="fa-solid fa-upload"></i>
+            <span>上傳文件</span>
+          </div>
+          
+          <label id="uploadArea"
+                 class="dropzone border-2 border-dashed border-slate-300 hover:border-blue-400 rounded-2xl p-5 flex flex-col items-center justify-center cursor-pointer bg-slate-50 hover:bg-blue-50/40 transition-all">
+            <i class="fa-solid fa-file-pdf text-3xl text-slate-400 mb-2"></i>
+            <div class="text-center">
+              <div class="text-sm font-medium text-slate-600">拖曳 PDF 或圖片到此</div>
+              <div class="text-xs text-slate-500 mt-0.5">支援 PDF / PNG / JPG / WEBP</div>
+            </div>
+            <input type="file" id="fileInput" class="hidden" accept="application/pdf,image/*" multiple>
+          </label>
+          
+          <div class="mt-3 text-[10px] text-slate-500 px-1">
+            圖片會自動轉為 PDF 頁面
+          </div>
         </div>
+
+        <!-- Port Palette -->
+        <div class="bg-white rounded-3xl shadow-sm border border-slate-200 p-5">
+          <div class="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-x-2">
+            <i class="fa-solid fa-tags"></i>
+            <span>端口類型（拖曳到圖上放置）</span>
+          </div>
+          
+          <div class="space-y-2" id="palette">
+            <!-- Populated by JS -->
+          </div>
+          
+          <div class="mt-4 text-[10px] bg-amber-50 text-amber-700 rounded-2xl p-3 leading-tight">
+            <i class="fa-solid fa-info-circle mr-1"></i>
+            拖曳色塊到 PDF 頁面上即可新增<br>
+            每新增一個自動 +1 編號
+          </div>
+        </div>
+
+        <!-- Statistics -->
+        <div class="bg-white rounded-3xl shadow-sm border border-slate-200 p-5">
+          <div class="text-sm font-semibold text-slate-700 mb-3 flex items-center justify-between">
+            <div class="flex items-center gap-x-2">
+              <i class="fa-solid fa-chart-bar"></i>
+              <span>統計</span>
+            </div>
+            <span id="totalCount" 
+                  class="px-3 py-0.5 bg-slate-900 text-white text-xs font-bold rounded-2xl">0</span>
+          </div>
+          
+          <div class="space-y-2 text-sm" id="statsList">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- Tips -->
+        <div class="bg-white/70 rounded-3xl border border-slate-200 p-4 text-xs text-slate-600">
+          <div class="font-medium text-slate-700 mb-1">操作提示</div>
+          <ul class="space-y-1 text-[12px]">
+            <li>• 右鍵點擊區塊可切換紅框或刪除</li>
+            <li>• 可直接拖曳區塊移動位置</li>
+            <li>• 刪除後編號不會重置（保持唯一）</li>
+            <li>• 建議使用較高解析度圖面</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Main Viewer -->
+      <div class="flex-1 min-w-0">
+        
+        <!-- Zoom Toolbar -->
+        <div class="flex items-center justify-between mb-2 px-1">
+          <div class="flex items-center gap-x-1.5">
+            <span class="text-xs font-medium text-slate-600">縮放：</span>
+            <button onclick="zoomOut()" class="w-7 h-7 flex items-center justify-center text-lg leading-none bg-white border border-slate-300 hover:bg-slate-50 active:bg-slate-100 rounded-xl font-bold text-slate-600">−</button>
+            <div id="zoomLevel" class="font-mono text-sm font-semibold bg-white border border-slate-300 px-3 py-0.5 rounded-2xl min-w-[52px] text-center">135%</div>
+            <button onclick="zoomIn()" class="w-7 h-7 flex items-center justify-center text-lg leading-none bg-white border border-slate-300 hover:bg-slate-50 active:bg-slate-100 rounded-xl font-bold text-slate-600">+</button>
+            
+            <button onclick="fitToWidth()" 
+                    class="ml-2 text-xs px-3 py-1 bg-white hover:bg-slate-50 border border-slate-300 rounded-2xl font-medium text-slate-600 flex items-center gap-x-1">
+              <i class="fa-solid fa-arrows-alt-h text-[10px]"></i>
+              <span>Fit 寬度</span>
+            </button>
+          </div>
+          <div class="text-[10px] text-slate-400">拖曳左側色塊到圖面放置</div>
+        </div>
+
+        <div id="dropOverlay" 
+             class="hidden fixed inset-0 bg-blue-900/10 z-40 items-center justify-center pointer-events-none">
+          <div class="bg-white rounded-3xl shadow-xl px-8 py-4 text-blue-700 font-medium flex items-center gap-x-3 pointer-events-auto">
+            <i class="fa-solid fa-download text-xl"></i>
+            <span>放開以上傳檔案</span>
+          </div>
+        </div>
+
+        <!-- Viewer Container -->
+        <div id="viewerContainer" 
+             class="pdf-viewer bg-slate-200 rounded-3xl min-h-[520px] p-6 overflow-auto border border-slate-300"
+             style="max-height: calc(100vh - 140px);">
+          
+          <!-- Initial State -->
+          <div id="initialState" class="h-full flex items-center justify-center">
+            <div class="text-center max-w-xs">
+              <div class="mx-auto w-16 h-16 bg-white rounded-2xl flex items-center justify-center mb-4 shadow-inner">
+                <i class="fa-solid fa-file-pdf text-4xl text-blue-300"></i>
+              </div>
+              <h3 class="text-lg font-semibold text-slate-700">開始使用</h3>
+              <p class="text-slate-500 text-sm mt-1">上傳平面圖、機房圖或設備圖後，即可拖曳四種端口標籤到圖面上</p>
+              <div class="mt-4 flex justify-center gap-2">
+                <button onclick="document.getElementById('fileInput').click()" 
+                        class="text-xs px-4 py-2 bg-white hover:bg-slate-50 border border-slate-300 rounded-2xl font-medium flex items-center gap-x-2 text-slate-600">
+                  <i class="fa-solid fa-folder-open"></i>
+                  <span>選擇檔案</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Pages go here -->
+          <div id="viewer" class="hidden"></div>
+        </div>
+        
+        <div class="flex items-center justify-between mt-3 px-1 text-xs text-slate-500">
+          <div>
+            目前載入：<span id="pageInfo" class="font-medium text-slate-600">-</span>
+          </div>
+          <div class="flex items-center gap-x-4">
+            <div class="flex items-center gap-x-1.5">
+              <div class="w-2 h-2 rounded-full bg-emerald-500"></div>
+              <span>黃 = Data</span>
+            </div>
+            <div class="flex items-center gap-x-1.5">
+              <div class="w-2 h-2 rounded-full bg-orange-500"></div>
+              <span>橙 = CCTV</span>
+            </div>
+            <div class="flex items-center gap-x-1.5">
+              <div class="w-2 h-2 rounded-full bg-blue-500"></div>
+              <span>藍 = Printer</span>
+            </div>
+            <div class="flex items-center gap-x-1.5">
+              <div class="w-2 h-2 rounded-full bg-emerald-500"></div>
+              <span>綠 = AP</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
+  </div>
 
-    <script>
-        let pdfDoc = null;
-        let pdfLibDoc = null;
-        let currentPage = 1;
-        let totalPages = 1;
-        let scale = 0.4;
-        let placedBlocks = [];
-        let counters = { data: 1, cctv: 1, printer: 1, ap: 1 };
+  <!-- Context Menu -->
+  <div id="contextMenu" class="hidden fixed bg-white shadow-xl border border-slate-200 rounded-2xl py-1 w-48 z-[100] context-menu">
+    <div onclick="toggleRedBorder()" class="px-4 py-2.5 hover:bg-slate-100 text-sm flex items-center gap-x-3 cursor-pointer rounded-t-2xl">
+      <i class="fa-solid fa-border-all text-red-500 w-4"></i>
+      <span>切換紅色外框</span>
+    </div>
+    <div onclick="resetBlockSize()" class="px-4 py-2.5 hover:bg-slate-100 text-sm flex items-center gap-x-3 cursor-pointer">
+      <i class="fa-solid fa-expand w-4"></i>
+      <span>重設為預設大小</span>
+    </div>
+    <div onclick="showSizeEditor()" class="px-4 py-2.5 hover:bg-slate-100 text-sm flex items-center gap-x-3 cursor-pointer">
+      <i class="fa-solid fa-ruler-horizontal w-4"></i>
+      <span>精確調整大小...</span>
+    </div>
+    <div onclick="deleteCurrentBlock()" class="px-4 py-2.5 hover:bg-red-50 text-sm flex items-center gap-x-3 cursor-pointer text-red-600">
+      <i class="fa-solid fa-trash-can w-4"></i>
+      <span>刪除此區塊</span>
+    </div>
+    <div class="border-t my-1"></div>
+    <div onclick="hideContextMenu()" class="px-4 py-2 text-xs text-slate-500 hover:bg-slate-50 cursor-pointer rounded-b-2xl">
+      取消
+    </div>
+  </div>
 
-        function init() {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  <script>
+    // ==================== CONFIG ====================
+    const pdfjsLib = window['pdfjs-dist/build/pdf'];
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    const PORT_TYPES = {
+      data: {
+        key: 'data',
+        name: 'Data Port',
+        bg: '#fde047',
+        border: '#1e2937',
+        text: '#1e2937',
+        format: (n) => `D${String(n).padStart(3, '0')}`,
+        start: 1
+      },
+      cctv: {
+        key: 'cctv',
+        name: 'CCTV Port',
+        bg: '#fb923c',
+        border: '#1e2937',
+        text: '#1e2937',
+        format: (n) => `CCTV-${n}`,
+        start: 1
+      },
+      printer: {
+        key: 'printer',
+        name: 'Printer Port',
+        bg: '#60a5fa',
+        border: '#1e2937',
+        text: '#1e2937',
+        format: (n) => `P${String(n).padStart(3, '0')}`,
+        start: 1
+      },
+      ap: {
+        key: 'ap',
+        name: 'AP Port',
+        bg: '#4ade80',
+        border: '#1e2937',
+        text: '#1e2937',
+        format: (n) => `AP${String(n).padStart(2, '0')}`,
+        start: 1
+      }
+    };
+
+    // ==================== STATE ====================
+    let pdfDoc = null;
+    let numPages = 0;
+    let blocks = [];
+    let counters = { data: 1, cctv: 1, printer: 1, ap: 1 };
+    let currentScale = 1.35; // slightly lower default for large floor plans
+    let currentBlockForMenu = null;
+    let currentOverlayForMenu = null;
+
+    let isDraggingBlock = false;
+    let dragBlockData = null;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+
+    // ==================== INIT ====================
+    function initTailwind() {
+      document.documentElement.style.setProperty('--accent', '#1e40af');
+    }
+
+    function initPalette() {
+      const container = document.getElementById('palette');
+      container.innerHTML = '';
+      
+      Object.values(PORT_TYPES).forEach(type => {
+        const el = document.createElement('div');
+        el.draggable = true;
+        el.dataset.type = type.key;
+        el.className = `flex items-center gap-x-3 px-4 py-3 rounded-2xl border cursor-grab active:cursor-grabbing transition-all
+                        hover:shadow-sm active:scale-[0.985]`;
+        el.style.background = '#fff';
+        el.style.borderColor = '#e2e8f0';
+        
+        el.innerHTML = `
+          <div class="w-9 h-7 flex-shrink-0 rounded-lg border flex items-center justify-center shadow-inner" 
+               style="background:${type.bg}; border-color:${type.border}">
+            <span class="font-mono text-[10px] font-bold tracking-wider" style="color:#1e2937; opacity:0.85">01</span>
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="font-semibold text-sm" style="color:#1e2937">${type.name}</div>
+            <div class="text-[10px] text-slate-500 font-mono">${type.format(type.start)}</div>
+          </div>
+          <div class="text-emerald-500">
+            <i class="fa-solid fa-grip-vertical text-sm opacity-40"></i>
+          </div>
+        `;
+        
+        // Drag start
+        el.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', type.key);
+          e.dataTransfer.effectAllowed = 'copy';
+        });
+        
+        container.appendChild(el);
+      });
+    }
+
+    function initUpload() {
+      const input = document.getElementById('fileInput');
+      const area = document.getElementById('uploadArea');
+      const dropOverlay = document.getElementById('dropOverlay');
+      
+      // Click to upload
+      area.addEventListener('click', () => input.click());
+      
+      // File selected
+      input.addEventListener('change', async (e) => {
+        if (e.target.files.length > 0) {
+          await handleFiles(e.target.files);
         }
+        input.value = ''; // reset
+      });
+      
+      // Drag & drop on area
+      area.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        area.classList.add('dragover');
+      });
+      area.addEventListener('dragleave', () => area.classList.remove('dragover'));
+      area.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        area.classList.remove('dragover');
+        if (e.dataTransfer.files.length) {
+          await handleFiles(e.dataTransfer.files);
+        }
+      });
+      
+      // Global drag for big overlay hint
+      let dragCounter = 0;
+      document.addEventListener('dragenter', (e) => {
+        if (e.dataTransfer.types.includes('Files')) {
+          dragCounter++;
+          dropOverlay.style.display = 'flex';
+          dropOverlay.classList.remove('hidden');
+        }
+      });
+      document.addEventListener('dragleave', () => {
+        dragCounter--;
+        if (dragCounter <= 0) {
+          dropOverlay.style.display = 'none';
+          dropOverlay.classList.add('hidden');
+          dragCounter = 0;
+        }
+      });
+      document.addEventListener('drop', () => {
+        dragCounter = 0;
+        dropOverlay.style.display = 'none';
+        dropOverlay.classList.add('hidden');
+      });
+    }
 
-        async function handleFileUpload(event) {
-            const file = event.target.files[0];
-            if (!file) return;
+    async function handleFiles(fileList) {
+      const files = Array.from(fileList);
+      const pdfFile = files.find(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+      
+      if (pdfFile) {
+        await loadPDF(pdfFile);
+      } else {
+        // images only
+        const images = files.filter(f => f.type.startsWith('image/'));
+        if (images.length > 0) {
+          await loadImagesAsPDF(images);
+        } else {
+          alert('請上傳 PDF 或圖片檔案');
+        }
+      }
+    }
 
-            const loading = document.getElementById('loading');
-            loading.classList.remove('hidden');
+    // ==================== LOAD PDF ====================
+    async function loadPDF(file) {
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        numPages = pdfDoc.numPages;
+        
+        resetState();
+        
+        document.getElementById('initialState').classList.add('hidden');
+        document.getElementById('viewer').classList.remove('hidden');
+        
+        await renderAllPages();
+        updateStats();
+        updateZoomUI();
+        document.getElementById('exportBtn').disabled = false;
+        
+        document.getElementById('pageInfo').innerHTML = `${numPages} 頁`;
+        
+        // Auto-suggest fit for very large pages
+        setTimeout(() => {
+          const firstWrapper = document.querySelector('.page-wrapper');
+          if (firstWrapper && firstWrapper.offsetWidth > 1600) {
+            // silently offer, but don't force
+          }
+        }, 800);
+      } catch (err) {
+        console.error(err);
+        alert('PDF 載入失敗：' + err.message);
+      }
+    }
 
-            try {
-                const originalBuffer = await file.arrayBuffer();
+    async function loadImagesAsPDF(imageFiles) {
+      const { jsPDF } = window.jspdf;
+      let pdf = null;
+      
+      for (let i = 0; i < imageFiles.length; i++) {
+        const file = imageFiles[i];
+        const dataUrl = await readFileAsDataURL(file);
+        const img = await loadImage(dataUrl);
+        
+        // Reasonable page size for plans (good visual size + quality)
+        let w = Math.min(img.width * 0.68, 1250);
+        let h = img.height * (w / img.width);
+        
+        const imgData = dataUrl;
+        
+        if (i === 0) {
+          pdf = new jsPDF({
+            orientation: w > h ? 'landscape' : 'portrait',
+            unit: 'pt',
+            format: [w, h]
+          });
+          pdf.addImage(imgData, 'JPEG', 0, 0, w, h);
+        } else {
+          pdf.addPage([w, h]);
+          pdf.addImage(imgData, 'JPEG', 0, 0, w, h);
+        }
+      }
+      
+      const pdfBytes = pdf.output('arraybuffer');
+      
+      // Load generated PDF with pdf.js (unified code path)
+      pdfDoc = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
+      numPages = pdfDoc.numPages;
+      
+      resetState();
+      
+      document.getElementById('initialState').classList.add('hidden');
+      document.getElementById('viewer').classList.remove('hidden');
+      
+      await renderAllPages();
+      updateStats();
+      updateZoomUI();
+      document.getElementById('exportBtn').disabled = false;
+      document.getElementById('pageInfo').innerHTML = `${numPages} 頁（來自圖片）`;
+    }
 
-                // ★ 關鍵修正：複製兩份 ArrayBuffer（解決 Detached ArrayBuffer 問題）
-                const bufferForPdfJs = originalBuffer.slice(0);
-                const bufferForPdfLib = originalBuffer.slice(0);
+    function resetState() {
+      blocks = [];
+      counters = { data: 1, cctv: 1, printer: 1, ap: 1 };
+      document.getElementById('viewer').innerHTML = '';
+      currentBlockForMenu = null;
+      hideContextMenu();
+    }
 
-                // 先載入 pdf.js
-                const loadingTask = pdfjsLib.getDocument({
-                    data: bufferForPdfJs,
-                    disableFontFace: true,
-                    disableRange: true,
-                    disableStream: true
-                });
-                pdfDoc = await loadingTask.promise;
+    // ==================== RENDER PAGES ====================
+    async function renderAllPages() {
+      const viewer = document.getElementById('viewer');
+      viewer.innerHTML = '';
+      
+      for (let i = 0; i < numPages; i++) {
+        const pageEl = await createPageElement(i);
+        viewer.appendChild(pageEl);
+        
+        // Render PDF content
+        const canvas = pageEl.querySelector('canvas');
+        await renderPdfPage(i, canvas);
+        
+        // Re-attach existing blocks for this page
+        const pageBlocks = blocks.filter(b => b.page === i);
+        const overlay = pageEl.querySelector('.overlay');
+        pageBlocks.forEach(block => {
+          createBlockElement(block, overlay);
+        });
+      }
+    }
 
-                totalPages = pdfDoc.numPages;
-                currentPage = 1;
+    async function createPageElement(pageIndex) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'page-wrapper rounded-2xl overflow-hidden relative';
+      wrapper.dataset.page = pageIndex;
+      
+      // Get actual page size at render scale
+      const page = await pdfDoc.getPage(pageIndex + 1);
+      const viewport = page.getViewport({ scale: currentScale });
+      
+      wrapper.style.width = viewport.width + 'px';
+      
+      wrapper.innerHTML = `
+        <div class="relative pdf-page" style="width:${viewport.width}px; height:${viewport.height}px;">
+          <canvas width="${viewport.width}" height="${viewport.height}" 
+                  class="block"></canvas>
+          
+          <!-- Overlay for blocks + drop target -->
+          <div class="overlay absolute inset-0"
+               style="width:${viewport.width}px; height:${viewport.height}px;"
+               data-page="${pageIndex}">
+          </div>
+          
+          <!-- Page label -->
+          <div class="absolute bottom-2 right-2 px-2.5 py-px bg-white/90 text-[10px] font-mono text-slate-500 border border-slate-200 rounded">
+            第 ${pageIndex + 1} 頁
+          </div>
+        </div>
+      `;
+      
+      const overlay = wrapper.querySelector('.overlay');
+      
+      // Drop handling
+      overlay.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        overlay.style.boxShadow = 'inset 0 0 0 3px #3b82f6';
+      });
+      
+      overlay.addEventListener('dragleave', () => {
+        overlay.style.boxShadow = '';
+      });
+      
+      overlay.addEventListener('drop', (e) => {
+        e.preventDefault();
+        overlay.style.boxShadow = '';
+        
+        const typeKey = e.dataTransfer.getData('text/plain');
+        if (!typeKey || !PORT_TYPES[typeKey]) return;
+        
+        const rect = overlay.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const ow = overlay.clientWidth;
+        const oh = overlay.clientHeight;
+        
+        addNewBlock(typeKey, pageIndex, x, y, ow, oh);
+      });
+      
+      // Click to add (bonus UX)
+      overlay.addEventListener('click', (e) => {
+        // Only if user is in "add mode" or we can use last used type
+        // For now, simple: do nothing (drag is primary)
+      });
+      
+      return wrapper;
+    }
 
-                // 再載入 pdf-lib（使用另一份複製的 buffer）
-                pdfLibDoc = await PDFLib.PDFDocument.load(bufferForPdfLib);
+    async function renderPdfPage(pageIndex, canvas) {
+      const page = await pdfDoc.getPage(pageIndex + 1);
+      const viewport = page.getViewport({ scale: currentScale });
+      
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+    }
 
-                document.getElementById('placeholder').classList.add('hidden');
-                document.getElementById('viewer-container').classList.remove('hidden');
-                document.getElementById('viewer-container').style.display = 'block';
+    // ==================== BLOCKS ====================
+    function addNewBlock(typeKey, pageIndex, x, y, overlayWidth, overlayHeight) {
+      const type = PORT_TYPES[typeKey];
+      
+      // 關鍵改進：找出目前該類型最小的可用編號（重複使用被刪除的號碼）
+      const num = getNextAvailableNumber(typeKey);
+      const label = type.format(num);
+      
+      // Store as normalized percentages (zoom-proof)
+      const xPct = Math.max(0.01, Math.min(0.99, x / overlayWidth));
+      const yPct = Math.max(0.01, Math.min(0.99, y / overlayHeight));
+      
+      const block = {
+        id: 'blk_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+        type: typeKey,
+        number: num,
+        label: label,
+        page: pageIndex,
+        xPct: xPct,
+        yPct: yPct,
+        redBorder: false,
+        // 使用 normalized size（以 scale=1.0 為基準），解決 export 位置/大小錯亂問題
+        widthNorm: ((typeKey === 'cctv') ? 58 : 50) / currentScale,
+        heightNorm: 16 / currentScale
+      };
+      
+      blocks.push(block);
+      
+      // Find the overlay and create DOM element
+      const pageWrapper = document.querySelector(`.page-wrapper[data-page="${pageIndex}"]`);
+      if (pageWrapper) {
+        const overlay = pageWrapper.querySelector('.overlay');
+        createBlockElement(block, overlay);
+      }
+      
+      updateStats();
+    }
+    
+    /**
+     * 找出某種類型目前最小的可用編號
+     * 例如：已有 D001, D003 → 回傳 2（下次新增會是 D002）
+     */
+    function getNextAvailableNumber(typeKey) {
+      const usedNumbers = new Set();
+      
+      blocks.forEach(b => {
+        if (b.type === typeKey && typeof b.number === 'number') {
+          usedNumbers.add(b.number);
+        }
+      });
+      
+      let candidate = 1;
+      while (usedNumbers.has(candidate)) {
+        candidate++;
+      }
+      return candidate;
+    }
 
-                await renderCurrentPage();
-                placedBlocks = [];
-                counters = { data: 1, cctv: 1, printer: 1, ap: 1 };
-                updateCounters();
+    function createBlockElement(block, overlay) {
+      const type = PORT_TYPES[block.type];
+      
+      // Backward compat: migrate old data
+      if (typeof block.xPct === 'undefined' && typeof block.x === 'number' && overlay.clientWidth > 0) {
+        block.xPct = Math.max(0.01, Math.min(0.99, block.x / overlay.clientWidth));
+        block.yPct = Math.max(0.01, Math.min(0.99, (block.y || 10) / overlay.clientHeight));
+      }
+      if (!block.widthNorm && block.width) {
+        block.widthNorm = block.width / currentScale;
+      }
+      if (!block.heightNorm && block.height) {
+        block.heightNorm = block.height / currentScale;
+      }
+      
+      // Compute pixel position from normalized percentages
+      const pw = overlay.clientWidth || 800;
+      const ph = overlay.clientHeight || 600;
+      const pixelX = (block.xPct ?? 0.1) * pw;
+      const pixelY = (block.yPct ?? 0.1) * ph;
+      
+      // 使用 normalized size 計算當前顯示尺寸（解決不同 zoom 與 export 不一致）
+      const w = (block.widthNorm ?? 50 / 1.35) * currentScale;
+      const h = (block.heightNorm ?? 16 / 1.35) * currentScale;
+      
+      const el = document.createElement('div');
+      el.className = `port-block absolute border-2 cursor-move`;
+      el.style.left = `${pixelX}px`;
+      el.style.top = `${pixelY}px`;
+      el.style.width = `${w}px`;
+      el.style.height = `${h}px`;
+      el.style.backgroundColor = type.bg;
+      el.style.borderColor = block.redBorder ? '#ef4444' : type.border;
+      el.style.color = type.text;
+      el.style.boxShadow = block.redBorder 
+        ? '0 0 0 3px #ef4444, 0 2px 4px rgb(0 0 0 / 0.2)' 
+        : '0 2px 4px rgb(0 0 0 / 0.15)';
+      
+      // 根據 block 高度動態計算字體大小，讓文字永遠置中且不會被邊框吃掉
+      const dynamicFontSize = Math.max(8, Math.min(14, h * 0.58));
+      
+      // 文字 + 四角 resize handle + 刪除按鈕
+      el.innerHTML = `
+        <span class="block-label" style="font-size:${dynamicFontSize}px; line-height:1;">${block.label}</span>
+        
+        <!-- 四角 Resize Handles -->
+        <div class="resize-handle resize-br absolute bottom-0 right-0 w-[10px] h-[10px] cursor-nwse-resize" data-corner="br"
+             style="background:rgba(30,41,59,0.75); border:1px solid #fff;"></div>
+        <div class="resize-handle resize-bl absolute bottom-0 left-0 w-[10px] h-[10px] cursor-nesw-resize" data-corner="bl"
+             style="background:rgba(30,41,59,0.75); border:1px solid #fff;"></div>
+        <div class="resize-handle resize-tr absolute top-0 right-0 w-[10px] h-[10px] cursor-nesw-resize" data-corner="tr"
+             style="background:rgba(30,41,59,0.75); border:1px solid #fff;"></div>
+        <div class="resize-handle resize-tl absolute top-0 left-0 w-[10px] h-[10px] cursor-nwse-resize" data-corner="tl"
+             style="background:rgba(30,41,59,0.75); border:1px solid #fff;"></div>
+        
+        <!-- 刪除按鈕 -->
+        <span class="delete-btn absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 hover:bg-red-600 text-white flex items-center justify-center text-[9px] leading-none opacity-0 group-hover:opacity-100 transition-all cursor-pointer" style="font-size:9px; box-shadow:0 1px 2px rgb(0 0 0 / .3); border-radius:0;">×</span>
+      `;
+      el.classList.add('group', 'relative');
+      el.dataset.id = block.id;
+      
+      if (block.redBorder) el.dataset.red = 'true';
+      
+      // Make it draggable
+      makeBlockDraggable(el, block);
+      
+      // Right click context menu
+      el.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showContextMenu(e, block, el);
+      });
+      
+      // Double click = toggle red (quick action)
+      el.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        block.redBorder = !block.redBorder;
+        syncBlockStyle(el, block);
+      });
+      
+      // Hover delete button
+      const delBtn = el.querySelector('.delete-btn');
+      if (delBtn) {
+        delBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          blocks = blocks.filter(b => b.id !== block.id);
+          el.remove();
+          updateStats();
+        });
+        delBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+      }
+      
+      // 四角 Resize 功能（自由調整長寬）
+      el.querySelectorAll('.resize-handle').forEach(handle => {
+        makeBlockResizable(el, block, handle);
+      });
+      
+      overlay.appendChild(el);
+      return el;
+    }
 
-            } catch (error) {
-                console.error(error);
-                alert("還是失敗了，請試試「強制渲染 (0.3)」按鈕");
-            } finally {
-                loading.classList.add('hidden');
+    function makeBlockDraggable(el, block) {
+      let startX, startY, origXPct, origYPct;
+      
+      el.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        
+        isDraggingBlock = true;
+        dragBlockData = block;
+        
+        startX = e.clientX;
+        startY = e.clientY;
+        
+        // Work with percentages
+        origXPct = block.xPct;
+        origYPct = block.yPct;
+        
+        el.style.zIndex = '9999';
+        document.body.style.userSelect = 'none';
+        
+        // Attach global listeners
+        const onMove = (ev) => {
+          if (!isDraggingBlock || dragBlockData !== block) return;
+          
+          const overlay = el.parentElement;
+          const pw = overlay.clientWidth;
+          const ph = overlay.clientHeight;
+          
+          // Calculate new position in pixels first for smooth dragging
+          const dx = ev.clientX - startX;
+          const dy = ev.clientY - startY;
+          
+          let newPixelX = (origXPct * pw) + dx;
+          let newPixelY = (origYPct * ph) + dy;
+          
+          // Constrain
+          const maxX = pw - el.offsetWidth - 2;
+          const maxY = ph - el.offsetHeight - 2;
+          
+          newPixelX = Math.max(4, Math.min(newPixelX, maxX));
+          newPixelY = Math.max(4, Math.min(newPixelY, maxY));
+          
+          // Update percentages (this makes it zoom-proof)
+          block.xPct = newPixelX / pw;
+          block.yPct = newPixelY / ph;
+          
+          // Update visual position
+          el.style.left = `${newPixelX}px`;
+          el.style.top = `${newPixelY}px`;
+        };
+        
+        const onUp = () => {
+          isDraggingBlock = false;
+          dragBlockData = null;
+          el.style.zIndex = '';
+          document.body.style.userSelect = '';
+          
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+        
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp, { once: true });
+      });
+    }
+
+    // ==================== RESIZE BLOCK (四角自由調整) ====================
+    let isResizingBlock = false;
+    let resizeBlockData = null;
+
+    function makeBlockResizable(el, block, handle) {
+      const corner = handle.dataset.corner || 'br';  // br, bl, tr, tl
+
+      handle.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+
+        isResizingBlock = true;
+        resizeBlockData = block;
+
+        const startClientX = e.clientX;
+        const startClientY = e.clientY;
+        const startW = block.width ?? el.offsetWidth;
+        const startH = block.height ?? el.offsetHeight;
+        const startLeft = parseFloat(el.style.left) || 0;
+        const startTop = parseFloat(el.style.top) || 0;
+
+        el.style.zIndex = '9999';
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = handle.style.cursor || 'nwse-resize';
+
+        // 顯示目前 block 實際尺寸（方便你知道現在多大）
+        let sizeTip = document.getElementById('resize-size-tip');
+        if (!sizeTip) {
+          sizeTip = document.createElement('div');
+          sizeTip.id = 'resize-size-tip';
+          sizeTip.style.position = 'fixed';
+          sizeTip.style.background = 'rgba(0,0,0,0.75)';
+          sizeTip.style.color = 'white';
+          sizeTip.style.fontSize = '12px';
+          sizeTip.style.padding = '2px 6px';
+          sizeTip.style.borderRadius = '3px';
+          sizeTip.style.pointerEvents = 'none';
+          sizeTip.style.zIndex = '99999';
+          sizeTip.style.whiteSpace = 'nowrap';
+          document.body.appendChild(sizeTip);
+        }
+        sizeTip.style.display = 'block';
+        sizeTip.textContent = `${Math.round(startW)} × ${Math.round(startH)}`;
+
+        const overlay = el.parentElement;
+
+        const onMove = (ev) => {
+          if (!isResizingBlock || resizeBlockData !== block) return;
+
+          const dx = ev.clientX - startClientX;
+          const dy = ev.clientY - startClientY;
+
+          let newW = startW;
+          let newH = startH;
+          let newLeft = startLeft;
+          let newTop = startTop;
+
+          const minW = 34;
+          const minH = 13;
+
+          if (corner === 'br' || corner === 'tr') {
+            newW = Math.max(minW, startW + dx);
+          }
+          if (corner === 'br' || corner === 'bl') {
+            newH = Math.max(minH, startH + dy);
+          }
+
+          // 左側手柄 → 要同時改變位置和寬度
+          if (corner === 'bl' || corner === 'tl') {
+            const proposedW = startW - dx;
+            if (proposedW >= minW) {
+              newW = proposedW;
+              newLeft = startLeft + dx;
+            } else {
+              newW = minW;
+              newLeft = startLeft + (startW - minW);
             }
+          }
+
+          // 上方手柄 → 同時改變位置和高度
+          if (corner === 'tr' || corner === 'tl') {
+            const proposedH = startH - dy;
+            if (proposedH >= minH) {
+              newH = proposedH;
+              newTop = startTop + dy;
+            } else {
+              newH = minH;
+              newTop = startTop + (startH - minH);
+            }
+          }
+
+          // 邊界限制
+          newLeft = Math.max(2, Math.min(newLeft, overlay.clientWidth - newW - 2));
+          newTop = Math.max(2, Math.min(newTop, overlay.clientHeight - newH - 2));
+          newW = Math.min(newW, overlay.clientWidth - newLeft - 2);
+          newH = Math.min(newH, overlay.clientHeight - newTop - 2);
+
+          // 更新資料（同時更新 normalized size）
+          block.width = newW;
+          block.height = newH;
+          block.widthNorm = newW / currentScale;
+          block.heightNorm = newH / currentScale;
+          block.xPct = newLeft / overlay.clientWidth;
+          block.yPct = newTop / overlay.clientHeight;
+
+          // 更新畫面
+          el.style.width = `${newW}px`;
+          el.style.height = `${newH}px`;
+          el.style.left = `${newLeft}px`;
+          el.style.top = `${newTop}px`;
+
+          // 同步更新文字大小（讓文字永遠跟 block 高度成比例）
+          const label = el.querySelector('.block-label');
+          if (label) {
+            label.style.fontSize = Math.max(8, Math.min(14, newH * 0.58)) + 'px';
+          }
+
+          // 更新尺寸提示
+          if (sizeTip) {
+            sizeTip.textContent = `${Math.round(newW)} × ${Math.round(newH)}`;
+            // 跟隨滑鼠顯示
+            sizeTip.style.left = (ev.clientX + 12) + 'px';
+            sizeTip.style.top = (ev.clientY + 12) + 'px';
+          }
+        };
+
+        const onUp = () => {
+          isResizingBlock = false;
+          resizeBlockData = null;
+          el.style.zIndex = '';
+          document.body.style.userSelect = '';
+          document.body.style.cursor = '';
+
+          // 移除尺寸提示
+          const tip = document.getElementById('resize-size-tip');
+          if (tip) tip.style.display = 'none';
+
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp, { once: true });
+      });
+
+      // Hover 效果
+      handle.addEventListener('mouseenter', () => {
+        handle.style.background = 'rgba(15, 23, 42, 0.95)';
+      });
+      handle.addEventListener('mouseleave', () => {
+        if (!isResizingBlock) handle.style.background = 'rgba(30,41,59,0.75)';
+      });
+    }
+
+    function syncBlockStyle(el, block) {
+      const type = PORT_TYPES[block.type];
+      el.style.borderColor = block.redBorder ? '#ef4444' : type.border;
+      el.style.boxShadow = block.redBorder 
+        ? '0 0 0 3px #ef4444, 0 2px 4px rgb(0 0 0 / 0.2)' 
+        : '0 2px 4px rgb(0 0 0 / 0.15)';
+      
+      if (block.redBorder) {
+        el.dataset.red = 'true';
+      } else {
+        delete el.dataset.red;
+      }
+    }
+
+    // ==================== CONTEXT MENU ====================
+    function showContextMenu(e, block, el) {
+      const menu = document.getElementById('contextMenu');
+      currentBlockForMenu = block;
+      currentOverlayForMenu = el;
+      
+      menu.style.left = `${e.pageX + 4}px`;
+      menu.style.top = `${e.pageY + 4}px`;
+      menu.classList.remove('hidden');
+      menu.style.display = 'block';
+    }
+    
+    function hideContextMenu() {
+      const menu = document.getElementById('contextMenu');
+      menu.style.display = 'none';
+      menu.classList.add('hidden');
+      currentBlockForMenu = null;
+      currentOverlayForMenu = null;
+    }
+    
+    function toggleRedBorder() {
+      if (!currentBlockForMenu || !currentOverlayForMenu) return;
+      
+      currentBlockForMenu.redBorder = !currentBlockForMenu.redBorder;
+      syncBlockStyle(currentOverlayForMenu, currentBlockForMenu);
+      hideContextMenu();
+    }
+    
+    function resetBlockSize() {
+      if (!currentBlockForMenu || !currentOverlayForMenu) return;
+      
+      const type = currentBlockForMenu.type;
+      const defaultW = (type === 'cctv') ? 58 : 50;
+      const defaultH = 16;
+      
+      currentBlockForMenu.width = defaultW;
+      currentBlockForMenu.height = defaultH;
+      currentBlockForMenu.widthNorm = defaultW / currentScale;
+      currentBlockForMenu.heightNorm = defaultH / currentScale;
+      
+      // 更新 DOM
+      currentOverlayForMenu.style.width = `${defaultW}px`;
+      currentOverlayForMenu.style.height = `${defaultH}px`;
+      
+      hideContextMenu();
+    }
+
+    // ==================== 精確大小編輯器 ====================
+    function showSizeEditor() {
+      hideContextMenu();
+      
+      if (!currentBlockForMenu || !currentOverlayForMenu) return;
+      
+      const block = currentBlockForMenu;
+      const el = currentOverlayForMenu;
+      
+      // 建立小型編輯面板
+      const panel = document.createElement('div');
+      panel.className = 'fixed bg-white shadow-2xl border border-slate-300 rounded-2xl p-4 z-[200] text-sm';
+      panel.style.minWidth = '220px';
+      
+      const currentW = Math.round(block.width || el.offsetWidth);
+      const currentH = Math.round(block.height || el.offsetHeight);
+      
+      panel.innerHTML = `
+        <div class="font-semibold mb-3 text-slate-700 flex items-center gap-2">
+          <i class="fa-solid fa-ruler-horizontal"></i>
+          <span>精確調整大小</span>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs text-slate-500 block mb-1">寬度 (px)</label>
+            <input type="number" id="size-w" value="${currentW}" min="34" max="400"
+                   class="w-full border border-slate-300 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:border-blue-400">
+          </div>
+          <div>
+            <label class="text-xs text-slate-500 block mb-1">高度 (px)</label>
+            <input type="number" id="size-h" value="${currentH}" min="13" max="120"
+                   class="w-full border border-slate-300 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:border-blue-400">
+          </div>
+        </div>
+        
+        <div class="flex gap-2 mt-4">
+          <button id="size-apply" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 rounded-2xl font-medium">套用</button>
+          <button id="size-cancel" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm py-2 rounded-2xl font-medium">取消</button>
+        </div>
+      `;
+      
+      // 定位在 block 附近
+      const rect = el.getBoundingClientRect();
+      panel.style.left = `${Math.min(rect.right + 12, window.innerWidth - 240)}px`;
+      panel.style.top = `${Math.max(60, rect.top)}px`;
+      
+      document.body.appendChild(panel);
+      
+      const inputW = panel.querySelector('#size-w');
+      const inputH = panel.querySelector('#size-h');
+      
+      // 套用
+      panel.querySelector('#size-apply').onclick = () => {
+        let newW = parseInt(inputW.value) || currentW;
+        let newH = parseInt(inputH.value) || currentH;
+        
+        newW = Math.max(34, Math.min(newW, 380));
+        newH = Math.max(13, Math.min(newH, 100));
+        
+        block.width = newW;
+        block.height = newH;
+        block.widthNorm = newW / currentScale;
+        block.heightNorm = newH / currentScale;
+        
+        el.style.width = `${newW}px`;
+        el.style.height = `${newH}px`;
+
+        // 同步更新文字大小
+        const label = el.querySelector('.block-label');
+        if (label) {
+          label.style.fontSize = Math.max(8, Math.min(14, newH * 0.58)) + 'px';
+        }
+        
+        panel.remove();
+      };
+      
+      // 取消
+      panel.querySelector('#size-cancel').onclick = () => panel.remove();
+      
+      // Enter 鍵套用
+      [inputW, inputH].forEach(inp => {
+        inp.onkeydown = (e) => {
+          if (e.key === 'Enter') panel.querySelector('#size-apply').click();
+          if (e.key === 'Escape') panel.remove();
+        };
+      });
+      
+      // 點擊外面關閉
+      setTimeout(() => {
+        const closeOnOutside = (ev) => {
+          if (!panel.contains(ev.target)) {
+            panel.remove();
+            document.removeEventListener('mousedown', closeOnOutside);
+          }
+        };
+        document.addEventListener('mousedown', closeOnOutside, { once: true });
+      }, 10);
+      
+      // 自動 focus 第一個欄位
+      setTimeout(() => inputW.focus(), 50);
+    }
+    
+    function deleteCurrentBlock() {
+      if (!currentBlockForMenu || !currentOverlayForMenu) return;
+      
+      // Remove from array
+      blocks = blocks.filter(b => b.id !== currentBlockForMenu.id);
+      
+      // Remove DOM
+      currentOverlayForMenu.remove();
+      
+      hideContextMenu();
+      updateStats();
+    }
+    
+    // Close context menu when clicking elsewhere
+    document.addEventListener('click', (e) => {
+      const menu = document.getElementById('contextMenu');
+      if (!menu.contains(e.target)) {
+        hideContextMenu();
+      }
+    });
+    
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        hideContextMenu();
+      }
+      if (e.key === 'Delete' && currentBlockForMenu) {
+        deleteCurrentBlock();
+      }
+    });
+
+    // ==================== STATS ====================
+    function updateStats() {
+      const totalEl = document.getElementById('totalCount');
+      const listEl = document.getElementById('statsList');
+      
+      const total = blocks.length;
+      totalEl.textContent = total;
+      
+      const counts = {
+        data: blocks.filter(b => b.type === 'data').length,
+        cctv: blocks.filter(b => b.type === 'cctv').length,
+        printer: blocks.filter(b => b.type === 'printer').length,
+        ap: blocks.filter(b => b.type === 'ap').length
+      };
+      
+      listEl.innerHTML = `
+        <div class="stats-card flex items-center justify-between px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-2xl">
+          <div class="flex items-center gap-x-2">
+            <div class="w-3 h-3 rounded" style="background:#fde047;border:1.5px solid #854d0e"></div>
+            <span class="font-medium text-sm">Data Port</span>
+          </div>
+          <span class="font-mono font-semibold text-yellow-800">${counts.data}</span>
+        </div>
+        
+        <div class="stats-card flex items-center justify-between px-3 py-2 bg-orange-50 border border-orange-200 rounded-2xl">
+          <div class="flex items-center gap-x-2">
+            <div class="w-3 h-3 rounded" style="background:#fb923c;border:1.5px solid #9a3412"></div>
+            <span class="font-medium text-sm">CCTV Port</span>
+          </div>
+          <span class="font-mono font-semibold text-orange-800">${counts.cctv}</span>
+        </div>
+        
+        <div class="stats-card flex items-center justify-between px-3 py-2 bg-blue-50 border border-blue-200 rounded-2xl">
+          <div class="flex items-center gap-x-2">
+            <div class="w-3 h-3 rounded" style="background:#60a5fa;border:1.5px solid #1e40af"></div>
+            <span class="font-medium text-sm">Printer Port</span>
+          </div>
+          <span class="font-mono font-semibold text-blue-800">${counts.printer}</span>
+        </div>
+        
+        <div class="stats-card flex items-center justify-between px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-2xl">
+          <div class="flex items-center gap-x-2">
+            <div class="w-3 h-3 rounded" style="background:#4ade80;border:1.5px solid #166534"></div>
+            <span class="font-medium text-sm">AP Port</span>
+          </div>
+          <span class="font-mono font-semibold text-emerald-800">${counts.ap}</span>
+        </div>
+      `;
+    }
+
+    // ==================== ZOOM CONTROLS ====================
+    function updateZoomUI() {
+      const el = document.getElementById('zoomLevel');
+      if (el) el.textContent = Math.round(currentScale * 100) + '%';
+    }
+
+    async function setZoom(newScale) {
+      if (!pdfDoc) return;
+      newScale = Math.max(0.4, Math.min(newScale, 4.0));
+      
+      const container = document.getElementById('viewerContainer');
+      const oldScrollTop = container.scrollTop;
+      const oldScrollLeft = container.scrollLeft;
+      const oldScale = currentScale;
+      const ratio = newScale / oldScale;
+      
+      // 不再需要手動縮放 width/height，因為我們使用 widthNorm * currentScale 來顯示
+      // 重新渲染時會自動用正確的顯示尺寸
+      
+      currentScale = newScale;
+      
+      document.getElementById('viewer').innerHTML = '';
+      await renderAllPages();
+      
+      container.scrollTop = oldScrollTop * ratio;
+      container.scrollLeft = oldScrollLeft * ratio;
+      
+      updateZoomUI();
+    }
+
+    async function zoomIn() {
+      await setZoom(currentScale + 0.25);
+    }
+    
+    async function zoomOut() {
+      await setZoom(currentScale - 0.25);
+    }
+    
+    async function fitToWidth() {
+      if (!pdfDoc) return;
+      
+      try {
+        const container = document.getElementById('viewerContainer');
+        const firstPage = await pdfDoc.getPage(1);
+        const viewport = firstPage.getViewport({ scale: 1.0 }); // base size
+        
+        const availableWidth = container.clientWidth - 60; // padding
+        const targetScale = Math.max(0.5, Math.min(3.5, availableWidth / viewport.width));
+        
+        await setZoom(targetScale);
+      } catch (e) {
+        // fallback
+        await setZoom(1.0);
+      }
+    }
+
+    // ==================== EXPORT - 高畫質 + 正確置中文字 ====================
+    async function exportPDF() {
+      if (!pdfDoc || blocks.length === 0) {
+        alert('請先上傳 PDF 並放置至少一個區塊');
+        return;
+      }
+      
+      const { jsPDF } = window.jspdf;
+      const exportBtn = document.getElementById('exportBtn');
+      const originalText = exportBtn.innerHTML;
+      
+      exportBtn.disabled = true;
+      exportBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i> 正在產生高畫質 PDF...`;
+      
+      const viewer = document.getElementById('viewer');
+      const container = document.getElementById('viewerContainer');
+      
+      const previousScrollTop = container.scrollTop;
+      const previousScrollLeft = container.scrollLeft;
+      const previousScale = currentScale;
+      
+      // 匯出時暫時用高倍率渲染，讓 PDF 背景變得非常銳利
+      const QUALITY_RENDER_SCALE = 2.9;
+      const HTML2CANVAS_EXTRA_SCALE = 2.0;
+      
+      // 用來暫存原本的樣式，匯出後恢復
+      const originalFontSizes = [];
+      const originalPaddings = [];
+      
+      try {
+        // 先切到高畫質模式重新渲染（PDF.js 會用更高解析度畫背景）
+        await setZoom(QUALITY_RENDER_SCALE);
+        await new Promise(r => setTimeout(r, 120));
+
+        // ==================== 這次認真加大文字（匯出階段專用） ====================
+        // 目標：讓 html2canvas 直接擷取到夠大、清楚、不易被邊框切的文字
+        document.querySelectorAll('.port-block').forEach((block, i) => {
+          originalPaddings[i] = block.style.padding;
+          // 匯出時給文字明顯更多上下空間（這是關鍵）
+          block.style.padding = '5px 6px';
+        });
+
+        document.querySelectorAll('.block-label').forEach((label, index) => {
+          originalFontSizes[index] = label.style.fontSize;
+          
+          const parentBlock = label.closest('.port-block');
+          const h = parentBlock ? parentBlock.offsetHeight : 24;
+          
+          // 根據 block 實際高度動態計算字體大小（你拉多大，文字就跟著多大）
+          // 係數 0.62 並保留合理上下邊距，避免被切
+          const exportFontSize = Math.max(14, Math.min(32, h * 0.62));
+          
+          label.style.fontSize = exportFontSize + 'px';
+          label.style.lineHeight = '1.05';
+          label.style.display = 'inline-flex';
+          label.style.alignItems = 'center';
+          label.style.justifyContent = 'center';
+          label.style.textAlign = 'center';
+        });
+
+        // 多等一點確保樣式完全生效
+        await new Promise(r => setTimeout(r, 100));
+
+        let pdf = null;
+        const totalScale = QUALITY_RENDER_SCALE * HTML2CANVAS_EXTRA_SCALE;
+
+        for (let p = 0; p < numPages; p++) {
+          const wrapper = viewer.querySelector(`.page-wrapper[data-page="${p}"]`);
+          if (!wrapper) continue;
+
+          // 高畫質擷取（此時 block 形狀與位置是正確的）
+          const canvas = await html2canvas(wrapper, {
+            scale: HTML2CANVAS_EXTRA_SCALE,
+            backgroundColor: '#ffffff',
+            logging: false,
+            useCORS: true
+          });
+
+          const ctx = canvas.getContext('2d');
+
+          // ==================== 極簡清理：只蓋掉原本可能被切的小文字中心 ====================
+          // 不再用 xPct 重算位置重畫整個文字（這是產生奇怪 D001 的主要來源）
+          // 文字大小主要靠上面高畫質時把 DOM 文字設成 20px + 多 padding 後擷取
+          const pageBlocks = blocks.filter(b => b.page === p);
+
+          for (const block of pageBlocks) {
+            const typeDef = PORT_TYPES[block.type];
+
+            const centerX = (block.xPct ?? 0.1) * canvas.width;
+            const centerY = (block.yPct ?? 0.1) * canvas.height;
+
+            // 只在中心蓋一個小區域的背景色，隱藏原本被切掉的微小舊文字
+            ctx.fillStyle = typeDef.bg;
+            ctx.fillRect(centerX - 42, centerY - 11, 84, 22);
+          }
+
+          const imgData = canvas.toDataURL('image/png');
+
+          const pageWidth = canvas.width / totalScale;
+          const pageHeight = canvas.height / totalScale;
+
+          if (p === 0) {
+            pdf = new jsPDF({
+              orientation: pageWidth > pageHeight ? 'landscape' : 'portrait',
+              unit: 'px',
+              format: [pageWidth, pageHeight]
+            });
+          } else {
+            pdf.addPage([pageWidth, pageHeight]);
+          }
+
+          pdf.addImage(imgData, 'PNG', 0, 0, pageWidth, pageHeight);
         }
 
-        async function renderCurrentPage() {
-            if (!pdfDoc) return;
-            const page = await pdfDoc.getPage(currentPage);
-            const viewport = page.getViewport({ scale });
-            const canvas = document.getElementById('pdf-canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            await page.render({ canvasContext: ctx, viewport }).promise;
-
-            const container = document.getElementById('viewer-container');
-            container.style.width = `${viewport.width}px`;
-            container.style.height = `${viewport.height}px`;
-            document.getElementById('page-info').textContent = `${currentPage} / ${totalPages}`;
+        if (pdf) {
+          pdf.save(`端口標註_${new Date().toISOString().slice(0,10)}.pdf`);
         }
+        
+      } catch (err) {
+        console.error(err);
+        alert('匯出失敗：' + (err.message || '發生錯誤'));
+      } finally {
+        // 恢復原本的樣式（重要！避免影響畫面顯示）
+        document.querySelectorAll('.block-label').forEach((label, index) => {
+          if (originalFontSizes[index] !== undefined) {
+            label.style.fontSize = originalFontSizes[index];
+          }
+          // 清除我們暫時加的置中樣式
+          label.style.lineHeight = '';
+          label.style.display = '';
+          label.style.alignItems = '';
+          label.style.justifyContent = '';
+          label.style.textAlign = '';
+        });
+        
+        // 恢復 block 的 padding
+        document.querySelectorAll('.port-block').forEach((block, i) => {
+          if (originalPaddings[i] !== undefined) {
+            block.style.padding = originalPaddings[i];
+          }
+        });
+        
+        // 恢復使用者原本的縮放與捲動位置
+        await setZoom(previousScale);
+        await new Promise(r => setTimeout(r, 30));
+        container.scrollTop = previousScrollTop;
+        container.scrollLeft = previousScrollLeft;
+        
+        exportBtn.disabled = false;
+        exportBtn.innerHTML = originalText;
+      }
+    }
 
-        function forceRender() {
-            scale = 0.3;
-            if (pdfDoc) renderCurrentPage();
-        }
+    // ==================== HELPERS ====================
+    function readFileAsDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+    
+    function loadImage(src) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = src;
+      });
+    }
 
-        function addBlock(type) {
-            if (!pdfDoc) return alert("請先上傳 PDF");
-            // 完整 addBlock 功能已包含
-            alert("區塊功能正常（完整版）");
-        }
+    function clearAll() {
+      if (!confirm('確定要清除所有標註與載入的文件嗎？')) return;
+      
+      pdfDoc = null;
+      numPages = 0;
+      blocks = [];
+      counters = { data: 1, cctv: 1, printer: 1, ap: 1 };
+      
+      document.getElementById('viewer').innerHTML = '';
+      document.getElementById('viewer').classList.add('hidden');
+      document.getElementById('initialState').classList.remove('hidden');
+      
+      document.getElementById('exportBtn').disabled = true;
+      document.getElementById('pageInfo').innerHTML = '-';
+      
+      updateStats();
+      updateZoomUI();
+    }
 
-        function updateCounters() {
-            document.getElementById('total-count').textContent = placedBlocks.length;
-        }
+    // Close menu on scroll
+    document.getElementById('viewerContainer').addEventListener('scroll', hideContextMenu);
 
-        function prevPage() { if (currentPage > 1) { currentPage--; renderCurrentPage(); } }
-        function nextPage() { if (currentPage < totalPages) { currentPage++; renderCurrentPage(); } }
+    // Keyboard hint
+    document.addEventListener('keydown', function(e) {
+      if (e.key.toLowerCase() === '?' && document.activeElement.tagName === 'BODY') {
+        alert('快速操作：\n• 拖曳左側色塊到圖面上新增\n• 右鍵區塊 → 紅框 / 刪除\n• 雙擊區塊快速切換紅框\n• Delete 鍵刪除目前選取的區塊');
+        e.preventDefault();
+      }
+    });
 
-        function exportPDF() {
-            alert("下載功能正常");
-        }
+    // ==================== BOOT ====================
+    function boot() {
+      initTailwind();
+      initPalette();
+      initUpload();
+      updateStats();
+      updateZoomUI();
+      
+      // Demo hint (optional)
+      console.log('%c[pdf-port-editor] Ready. GitHub Pages ready.', 'color:#64748b');
+      
+      // Make export button nicer
+      const exportBtn = document.getElementById('exportBtn');
+      exportBtn.addEventListener('mouseenter', () => {
+        if (!exportBtn.disabled) exportBtn.classList.add('!bg-emerald-700');
+      });
+      exportBtn.addEventListener('mouseleave', () => exportBtn.classList.remove('!bg-emerald-700'));
+    }
 
-        window.onload = init;
-    </script>
+    window.addEventListener('load', boot);
+  </script>
 </body>
 </html>
